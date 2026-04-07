@@ -1,0 +1,5 @@
+{
+  "name": "Coyote Móvel",
+  "description": "Aplicativo de mobilidade urbana (carros e motos) com modelo de monetização escalável.",
+  "requestFramePermissions": ["geolocation"]
+}

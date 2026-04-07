@@ -1,0 +1,165 @@
+rules_version = '2';
+
+service cloud.firestore {
+  match /databases/{database}/documents {
+
+    // ===============================================================
+    // Assumed Data Model
+    // ===============================================================
+    //
+    // Collection: users
+    // Document ID: {userId}
+    // Fields:
+    //   - uid: string (required)
+    //   - role: string (required, 'passenger', 'driver', 'admin')
+    //   - name: string (required)
+    //   - email: string (required)
+    //   - phone: string (optional)
+    //   - status: string (optional, 'online', 'offline', 'busy')
+    //   - vehicleType: string (optional, 'car', 'motorcycle', 'none')
+    //   - vehiclePlate: string (optional)
+    //   - rating: number (optional)
+    //   - balance: number (optional)
+    //   - createdAt: timestamp (required)
+    //
+    // Collection: rides
+    // Document ID: {rideId}
+    // Fields:
+    //   - passengerId: string (required)
+    //   - driverId: string (optional)
+    //   - status: string (required, 'requested', 'accepted', 'in_progress', 'completed', 'cancelled')
+    //   - origin: map (required)
+    //   - destination: map (required)
+    //   - vehicleType: string (required, 'car', 'motorcycle')
+    //   - distance: number (optional)
+    //   - duration: number (optional)
+    //   - price: number (required)
+    //   - driverEarnings: number (optional)
+    //   - platformFee: number (optional)
+    //   - createdAt: timestamp (required)
+    //   - completedAt: timestamp (optional)
+    //
+    // ===============================================================
+
+    // ===============================================================
+    // Helper Functions
+    // ===============================================================
+
+    function isAuthenticated() {
+      return request.auth != null;
+    }
+
+    function isOwner(userId) {
+      return isAuthenticated() && request.auth.uid == userId;
+    }
+
+    function isAdmin() {
+      return isAuthenticated() &&
+        (get(/databases/$(database)/documents/users/$(request.auth.uid)).data.role == 'admin' ||
+         (request.auth.token.email == "marcelodasilvareis30@gmail.com" && request.auth.token.email_verified == true));
+    }
+
+    function isDriver() {
+      return isAuthenticated() && get(/databases/$(database)/documents/users/$(request.auth.uid)).data.role == 'driver';
+    }
+
+    function isPassenger() {
+      return isAuthenticated() && get(/databases/$(database)/documents/users/$(request.auth.uid)).data.role == 'passenger';
+    }
+
+    function hasRequiredFields(fields) {
+      return request.resource.data.keys().hasAll(fields);
+    }
+
+    function isValidEmail(email) {
+      return email is string && email.matches("^[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\\.[a-zA-Z]{2,}$");
+    }
+
+    // ===============================================================
+    // Domain Validators
+    // ===============================================================
+
+    function isValidUser(data) {
+      return hasRequiredFields(['uid', 'role', 'name', 'email', 'createdAt']) &&
+             data.uid is string && data.uid.size() > 0 && data.uid.size() < 128 &&
+             data.role in ['passenger', 'driver', 'admin'] &&
+             data.name is string && data.name.size() > 0 && data.name.size() < 100 &&
+             data.email is string && isValidEmail(data.email) &&
+             data.createdAt is timestamp &&
+             (!('phone' in data) || (data.phone is string && data.phone.size() < 20)) &&
+             (!('status' in data) || data.status in ['online', 'offline', 'busy']) &&
+             (!('vehicleType' in data) || data.vehicleType in ['car', 'motorcycle', 'none']) &&
+             (!('vehiclePlate' in data) || (data.vehiclePlate is string && data.vehiclePlate.size() < 20)) &&
+             (!('rating' in data) || data.rating is number) &&
+             (!('balance' in data) || data.balance is number);
+    }
+
+    function isValidRide(data) {
+      return hasRequiredFields(['passengerId', 'status', 'origin', 'destination', 'vehicleType', 'price', 'createdAt']) &&
+             data.passengerId is string && data.passengerId.size() > 0 && data.passengerId.size() < 128 &&
+             data.status in ['requested', 'accepted', 'in_progress', 'completed', 'cancelled'] &&
+             data.origin is map && data.origin.keys().hasAll(['address', 'lat', 'lng']) &&
+             data.destination is map && data.destination.keys().hasAll(['address', 'lat', 'lng']) &&
+             data.vehicleType in ['car', 'motorcycle'] &&
+             data.price is number && data.price >= 0 &&
+             data.createdAt is timestamp &&
+             (!('driverId' in data) || (data.driverId is string && data.driverId.size() < 128)) &&
+             (!('distance' in data) || data.distance is number) &&
+             (!('duration' in data) || data.duration is number) &&
+             (!('driverEarnings' in data) || data.driverEarnings is number) &&
+             (!('platformFee' in data) || data.platformFee is number) &&
+             (!('completedAt' in data) || data.completedAt is timestamp);
+    }
+
+    // ===============================================================
+    // Rules
+    // ===============================================================
+
+    match /users/{userId} {
+      // Anyone can read their own profile. Admins can read all. Drivers/Passengers can read basic info of each other if needed for a ride (simplified here to allow authenticated read for MVP, but should be restricted in prod).
+      allow read: if isAuthenticated();
+      
+      // Users can create their own profile. Only admins can create admin roles.
+      allow create: if isAuthenticated() && 
+                    isOwner(userId) && 
+                    isValidUser(request.resource.data) && 
+                    request.resource.data.uid == userId &&
+                    (request.resource.data.role in ['passenger', 'driver'] || isAdmin());
+
+      // Users can update their own profile, but cannot change their role or uid. Admins can update anything.
+      allow update: if isAuthenticated() && 
+                    isValidUser(request.resource.data) &&
+                    ((isOwner(userId) && 
+                      request.resource.data.uid == resource.data.uid && 
+                      request.resource.data.role == resource.data.role) || 
+                     isAdmin());
+    }
+
+    match /rides/{rideId} {
+      // Passengers can read their own rides. Drivers can read available rides and their own rides. Admins can read all.
+      allow read: if isAuthenticated() && 
+                  (resource.data.passengerId == request.auth.uid || 
+                   resource.data.driverId == request.auth.uid || 
+                   (isDriver() && resource.data.status == 'requested') ||
+                   isAdmin());
+
+      // Passengers can create rides.
+      allow create: if isPassenger() && 
+                    isValidRide(request.resource.data) && 
+                    request.resource.data.passengerId == request.auth.uid &&
+                    request.resource.data.status == 'requested';
+
+      // Drivers can accept rides. Passengers can cancel. Drivers can update status.
+      allow update: if isAuthenticated() && 
+                    isValidRide(request.resource.data) &&
+                    request.resource.data.passengerId == resource.data.passengerId && // Passenger ID cannot change
+                    request.resource.data.createdAt == resource.data.createdAt && // CreatedAt cannot change
+                    (
+                      isAdmin() ||
+                      (isPassenger() && resource.data.passengerId == request.auth.uid && request.resource.data.status == 'cancelled') ||
+                      (isDriver() && resource.data.status == 'requested' && request.resource.data.status == 'accepted' && request.resource.data.driverId == request.auth.uid) ||
+                      (isDriver() && resource.data.driverId == request.auth.uid && request.resource.data.status in ['in_progress', 'completed', 'cancelled'])
+                    );
+    }
+  }
+}

@@ -1,0 +1,36 @@
+@import "tailwindcss";
+@import "tw-animate-css";
+
+@theme {
+  --color-coyote-50: #fff8ed;
+  --color-coyote-100: #ffefd6;
+  --color-coyote-200: #ffdbab;
+  --color-coyote-300: #ffc27a;
+  --color-coyote-400: #ff9f40;
+  --color-coyote-500: #ff8014;
+  --color-coyote-600: #ef6407;
+  --color-coyote-700: #c64a08;
+  --color-coyote-800: #9d3a0f;
+  --color-coyote-900: #7e3110;
+  --color-coyote-950: #441606;
+}
+
+@layer base {
+  :root {
+    --background: 0 0% 100%;
+    --foreground: 240 10% 3.9%;
+  }
+  .dark {
+    --background: 240 10% 3.9%;
+    --foreground: 0 0% 98%;
+  }
+  body {
+    @apply bg-zinc-950 text-zinc-50 antialiased selection:bg-coyote-500 selection:text-white;
+  }
+}
+
+/* Hide scrollbar for clean mobile UI */
+::-webkit-scrollbar {
+  width: 0px;
+  background: transparent;
+}
